@@ -1,7 +1,9 @@
 # scroll-world
 
-> **Fork notice** — this is [cth9191's](https://github.com/cth9191/scroll-world) hardened fork of
-> [oso95/scroll-world](https://github.com/oso95/scroll-world): budget tiers + spend gates
+> **Fork notice** — this is [UnifiedOblivion's](https://github.com/UnifiedOblivion/scroll-world) fork of
+> [cth9191's hardened fork](https://github.com/cth9191/scroll-world) of
+> [oso95/scroll-world](https://github.com/oso95/scroll-world), ported from Higgsfield to
+> OpenArt (Seedream 5.0 Pro stills, Kling 3 Omni video). The hardening carries over: budget tiers + spend gates
 > (a 6-scene run is ~17 paid generations upstream — this fork asks first and offers 8-gen
 > lean runs), a previz draft pass, automated SSIM seam verification, extracted-frame
 > posters, an iOS Low Power Mode fallback, device-class clip tiering (iPads get the 1080p
@@ -23,7 +25,7 @@ logistics site, applied to whatever you want).
 ### As a plugin (recommended)
 
 ```
-/plugin marketplace add cth9191/scroll-world
+/plugin marketplace add UnifiedOblivion/scroll-world
 /plugin install scroll-world@scroll-world
 ```
 
@@ -35,7 +37,7 @@ Then just ask for a scroll-through world landing page, or invoke `/scroll-world`
 Copy the skill folder into your Claude Code skills directory:
 
 ```bash
-git clone https://github.com/cth9191/scroll-world
+git clone https://github.com/UnifiedOblivion/scroll-world
 cp -R scroll-world/plugins/scroll-world/skills/scroll-world ~/.claude/skills/
 ```
 

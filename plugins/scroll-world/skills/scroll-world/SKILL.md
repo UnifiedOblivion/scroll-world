@@ -1,16 +1,6 @@
 ---
 name: scroll-world
-description: >
-  Build an immersive scroll-scrubbed "fly through the world" landing page for any
-  industry or brand using OpenArt. As the visitor scrolls, a pre-rendered camera
-  flies from outside each scene into its interior, then flows on to the next scene
-  with NO cuts — one continuous connected flight (Emons-style isometric diorama world,
-  or any art direction you pick). The skill interviews the user for the topic, the
-  story beats/sections, and brand kit, then generates cohesive scenes (Seedream 5.0 Pro)
-  + seamless camera clips (Kling 3 Omni) with OpenArt and wires a portable,
-  framework-agnostic scroll-scrub engine. Use when the user wants a "3D world" /
-  "browse-through-the-industry" hero, a scroll cinematic, a diorama landing, or to
-  turn a business into a scrollable world.
+description: "Build an immersive scroll-scrubbed fly-through-the-world landing page using OpenArt: scroll drives a pre-rendered camera from scene into scene with no cuts, one continuous flight. Interviews for topic/beats/brand, generates scenes + seamless camera clips, wires a portable framework-agnostic scrub engine. Use when the user wants a 3D-world hero, scroll cinematic, diorama landing, or to turn a business into a scrollable world."
 allowed-tools: Bash, Read, Write, Edit, AskUserQuestion, Skill, mcp__openart__openart_model_list, mcp__openart__openart_model_form_get, mcp__openart__openart_model_cost, mcp__openart__openart_generate_image, mcp__openart__openart_generate_video, mcp__openart__openart_creation_get, mcp__openart__openart_creation_wait, mcp__openart__openart_creation_list, mcp__openart__openart_upload_sign, mcp__openart__openart_upload_pick, mcp__openart__openart_upload_list, mcp__openart__openart_account_get
 ---
 

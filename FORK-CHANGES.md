@@ -1,5 +1,30 @@
 # How this fork differs from oso95/scroll-world
 
+## 0. OpenArt port (2026-07, supersedes the Higgsfield lane)
+
+Generation moved from the Higgsfield CLI to the **OpenArt MCP** (`mcp__openart__*`):
+
+- **Image default: Seedream 5.0 Pro**, resolved from `openart_model_list` by display
+  name at run time (as of 2026-07 it's in OpenArt's web UI but not yet the MCP catalog
+  — the skill surfaces the gap and never silently downgrades, especially not to 5 Lite).
+  Stills are now generated at **16:9** because Kling's `image2video` has no aspect
+  param — the clip inherits the start frame's aspect.
+- **Video default: Kling 3 Omni** (`kling-3-omni`) — verified `image2video` with
+  required `startFrame` + optional `endFrame`, so it holds both architectures. Every
+  chained clip: `generateSound: false`, `multiShot: false`. Content-filter fallback for
+  a single stubborn clip: `byte-plus-seedance-2` with the same uploaded frames.
+- **Previz doctrine reworked**: the draft tier is the SAME model at `resolution: "std"`
+  (~70% of `pro` cost — quoted live 2026-07), so a full previz pass is no longer cheap
+  insurance. Default is NO previz; draft only before `4k` finals (~3.4× `pro`) or for
+  the 1–2 riskiest legs. The mini-model previz tier is gone (Seedance Mini quoted MORE
+  than Kling `std` at equal duration).
+- **Seam handoffs ride the upload lane**: extracted boundary frames go up via
+  `openart_upload_sign` + HTTP PUT and come back as `startFrame`/`endFrame` reference
+  objects. Job flow is always model_list → form_get → model_cost (live quote + explicit
+  approval) → generate → creation_wait → download.
+- Everything provider-agnostic is unchanged: seam doctrine, SSIM gate, budget/mobile
+  tiers, extracted-frame posters, the scrub engine, SEO block.
+
 Upstream builds the same thing — a scroll-scrubbed "fly through the world" landing page
 with frame-locked seams. This fork keeps all of that (prompts, seam doctrine, engine)
 and hardens the parts that cost real money and real visitors: **credit spend, automated
@@ -19,9 +44,9 @@ the interview — a style miss or mid-run crash burns real credits.
   buffer (~20–30% on interiors), runtime.
 - **Anchor-still gate**: ONE still generated first, user approves the art direction,
   then the rest batch with `--image` style lock. Style miss costs 1 gen, not N.
-- **Previz by default** (5+ scenes): whole chain rendered on `seedance_2_0_mini`
-  (frame-locking intact), page reviewed from drafts, full-model credits spent only
-  after approval. Mini can also BE the final model at 720p on lean budgets.
+- **Draft tier** (reworked in the OpenArt port — see §0): same chain model at `std`
+  resolution, used selectively (before `4k` finals or for risky legs); `std` can also
+  BE the final tier at 720-class on lean budgets.
 - **Idempotent pipeline**: every `gen_*` skips existing outputs (output file = run
   state) + `status()` helper. A crash or NSFW re-roll never repays finished work.
 - **Cheap-seam levers documented**: connectors are individually optional (`null` slot

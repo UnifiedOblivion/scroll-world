@@ -1,4 +1,8 @@
-# Pipeline: copy-paste scripts (bash 3.2 safe)
+# Pipeline: OpenArt recipes + copy-paste local scripts (bash 3.2 safe)
+
+Generation runs through the OpenArt MCP tools (you drive them as tool calls — there is
+no generation CLI). Everything local — frame extraction, encoding, posters, the SSIM
+gate — is bash + ffmpeg, copy-paste below.
 
 Set these once. `NAMES` is the ordered section ids; the last is the hero/finale.
 
@@ -7,28 +11,33 @@ WORK=/tmp/scroll-world           # scratch dir for prompts, sources, frames
 ASSETS=./assets                  # where the site reads stills (webp) + clips (mp4)
 mkdir -p "$WORK" "$ASSETS/vid"
 NAMES="farm kitchen shop delivery plaza finale"   # <-- your section ids, in order
-
-# Chain video model — ONE for every chained clip (SKILL Step 4 roster).
-# Must accept --start-image AND --end-image (verify: higgsfield model get <model>):
-# seedance_2_0 | kling3_0 | seedance_2_0_mini (draft tier). Reference-only models can't
-# hold a seam; models without --mode (e.g. kling3_0_turbo) need their own flag branch below.
-VMODEL=seedance_2_0
-case "$VMODEL" in                                  # per-model flags + durations (bash 3.2 safe)
-  kling3_0)          VOPTS="--mode std --sound off";          DIVE_DUR=10; CONN_DUR=5 ;;  # no --resolution param on Kling
-  seedance_2_0_mini) VOPTS="--mode std --resolution 720p";    DIVE_DUR=8;  CONN_DUR=5 ;;  # cheap frame-locked previz
-  *)                 VOPTS="--mode std --resolution 1080p";   DIVE_DUR=8;  CONN_DUR=5 ;;  # seedance_2_0 default
-esac
 ```
 
-Higgsfield generations take minutes — every `higgsfield ... --wait` call below is meant
-to run inside a **backgrounded** script. Launch the whole script with your tool's
-background/detached mode and poll the progress log; never block the foreground.
+**Chain video model — ONE for every chained clip** (SKILL Step 4 roster). Its
+`image2video` form must take `startFrame`, and `endFrame` too for connectors — verify
+with `openart_model_form_get(model, "image2video")`. Default `kling-3-omni`; param
+blocks below. Reference-only (element) models can't hold a seam.
 
-**Resume / idempotency.** Every `gen_*` function below skips work whose output file
-already exists and is non-empty — `$WORK` *is* the run state. A crash, credit stall, or
-NSFW re-roll never costs finished assets: just re-run the same loop and only the missing
-pieces regenerate. To force a re-roll of one asset, delete its file first
-(`rm "$WORK/dive_shop.mp4"; gen_dive shop`). Check where a run stands any time:
+```
+KLING FINAL (dive/leg):  { "resolution": "pro", "duration": 8,  "generateSound": false,
+                           "multiShot": false, "videoCount": 1 }
+KLING FINAL (connector): { "resolution": "pro", "duration": 5,  "generateSound": false,
+                           "multiShot": false, "videoCount": 1 }
+KLING DRAFT tier:        same blocks with "resolution": "std"   (~70% of pro cost —
+                           worth a draft pass only before 4k finals; SKILL Step 4)
+KLING GOLD tier:         same blocks with "resolution": "4k"    (quote it first — ~3.4× pro)
+```
+
+Always: `openart_model_form_get` before the first job of a batch (fields drift),
+`openart_model_cost` with the exact params before spending (prices drift; the numbers
+in SKILL Step 1 are 2026-07 quotes).
+
+**Resume / idempotency.** The output file *is* the run state: before generating any
+asset, check whether its local file already exists and is non-empty — if so, skip the
+job. A crash, credit stall, or filter re-roll never costs finished assets: re-run the
+same loop and only the missing pieces regenerate. To force a re-roll of one asset,
+delete its file first (`rm "$WORK/dive_shop.mp4"`, then regenerate just that one).
+Check where a run stands any time:
 
 ```bash
 status() { for n in $NAMES; do
@@ -38,51 +47,49 @@ status() { for n in $NAMES; do
 done; ls "$WORK"/conn_*.mp4 2>/dev/null | while read f; do printf 'conn: %s ok\n' "$f"; done; }
 ```
 
-**Previz first (recommended default).** Run the whole chain once on the draft tier
-before spending full-model credits:
+## 0. The two OpenArt lanes you'll repeat all run
+
+**Generate → wait → download.** `openart_generate_image` / `openart_generate_video`
+returns a `historyId` (status PENDING). Poll `openart_creation_wait(historyId)` — video
+often outlasts one wait window; on STILL_RUNNING call it again with the same historyId.
+When finished, curl the result's media URL down to its `$WORK` file:
 
 ```bash
-VMODEL=seedance_2_0_mini   # frame-locking intact (~720p) — seams behave like the final's
-# … run §2–§5, review the assembled page, fix journey/prompts/seams cheaply …
-VMODEL=seedance_2_0        # then clear the draft clips and re-render final
-rm -f "$WORK"/dive_*.mp4 "$WORK"/conn_*.mp4 "$WORK"/first_*.png "$WORK"/last_*.png
+curl -fsSL "<result media url>" -o "$WORK/dive_farm.mp4"
 ```
 
-Because the mini tier still frame-locks, everything you validate (journey, camera
-grammar, seam continuity, copy pacing) translates directly to the final render. Stills
-are reused as-is — only the video passes re-run. Skip previz only for small (≤4-scene)
-runs where a full-model re-roll is cheaper than the extra pass.
+**Upload a local frame → reference object.** Chained clips are seeded with locally
+extracted frames, which must be uploaded before generating:
+
+1. `openart_upload_sign` with `mediaType: "image"`, the exact byte `size`
+   (`wc -c < file`), `contentType: "image/png"`, `purpose: "create-video"`, and a
+   meaningful `label` (e.g. `"leg-2 last frame"`).
+2. PUT the bytes to the returned `signURL`:
+   ```bash
+   curl -fsS -X PUT -H "Content-Type: image/png" --data-binary "@$WORK/last_farm.png" "<signURL>"
+   ```
+3. Use the returned reference object (`{type:"image", id, url, label}`) as the job's
+   `startFrame` / `endFrame`.
+
+Uploads are reusable within the run — don't re-upload the same frame for a re-roll.
 
 ## 1. Scene stills (Step 2) — anchor first, then batch
 
 Write one prompt file per section to `$WORK/still_<name>.txt` (see prompts.md).
+Image model: **Seedream 5.0 Pro**, resolved from `openart_model_list` by display name
+(SKILL Step 0 availability gate — never infer a slug, never silently downgrade).
+Aspect **16:9** (Kling `image2video` inherits the start frame's aspect), 2K-class
+quality per the current form.
 
 **Do NOT batch all N immediately.** Generate ONE anchor still first (the most
-representative scene), get the user's approval on the art direction, then batch the
-rest with the approved anchor passed as `--image` to lock the style. A style miss
-caught on the anchor costs 1 gen; caught after the batch it costs N.
+representative scene) via `text2image`, download it to `$WORK/still_<anchor>.png`, and
+get the user's approval on the art direction. A style miss caught on the anchor costs
+1 gen; caught after the batch it costs N.
 
-```bash
-STYLE_LOCK=""   # set to the approved anchor after the gate below
-gen_still() { # name
-  [ -s "$WORK/still_$1.png" ] && { echo "still $1 cached"; return 0; }
-  higgsfield generate create gpt_image_2 --prompt "$(cat "$WORK/still_$1.txt")" \
-    ${STYLE_LOCK:+--image "$STYLE_LOCK"} \
-    --aspect_ratio 3:2 --resolution 2k --quality high --wait --wait-timeout 15m --json \
-    > "$WORK/still_$1.json" 2> "$WORK/still_$1.err"
-  url=$(jq -r '.[0].result_url // empty' "$WORK/still_$1.json")
-  [ -n "$url" ] && curl -fsSL "$url" -o "$WORK/still_$1.png" && echo "still $1 ok" || echo "still $1 FAIL"
-}
-
-# 1. Anchor + approval gate (pick the scene that best expresses the world):
-gen_still farm                      # ← your anchor section
-# → SHOW the user still_farm.png; iterate the style preamble until approved.
-#   A rejected anchor: fix the preamble in ALL prompt files, rm the png, re-roll.
-
-# 2. Then batch the rest, style-locked to the approved anchor:
-STYLE_LOCK="$WORK/still_farm.png"
-for n in $NAMES; do gen_still "$n" & done ; wait   # anchor skips itself (cached)
-```
+Then batch the remaining N-1 **in `image2image` mode with the approved anchor as the
+reference image** to lock the style (fetch the `image2image` form for the exact
+reference field — it drifts between models). Skip any still whose
+`$WORK/still_<name>.png` already exists. Download each result as it finishes.
 
 Convert to webp for the site (and optionally run knockout.py first for transparency):
 
@@ -91,27 +98,25 @@ for n in $NAMES; do cwebp -quiet -q 84 -resize 1800 0 "$WORK/still_$n.png" -o "$
 ```
 
 Review the batch for cohesion before continuing. Re-roll any off-style one
-(`rm "$WORK/still_shop.png"; gen_still shop` — the style lock is still in force).
+(`rm "$WORK/still_shop.png"`, regenerate just that one — the anchor style lock stays
+in force).
 
-## 2. Dive-in clips (Step 4)
+## 2. Dive-in / leg clips (Step 4)
 
-Prompt files at `$WORK/dive_<name>.txt`. Start image = the solid-bg still PNG.
+Prompt files at `$WORK/dive_<name>.txt`. Skip any name whose `$WORK/dive_<name>.mp4`
+exists.
 
-```bash
-gen_dive() { # name                       ($VOPTS is unquoted on purpose — word-split flags)
-  [ -s "$WORK/dive_$1.mp4" ] && { echo "dive $1 cached"; return 0; }
-  higgsfield generate create "$VMODEL" --prompt "$(cat "$WORK/dive_$1.txt")" \
-    --start-image "$WORK/still_$1.png" \
-    $VOPTS --aspect_ratio 16:9 --duration "$DIVE_DUR" \
-    --wait --wait-timeout 20m --json > "$WORK/dive_$1.json" 2> "$WORK/dive_$1.err"
-  url=$(jq -r '.[0].result_url // empty' "$WORK/dive_$1.json")
-  [ -n "$url" ] && curl -fsSL "$url" -o "$WORK/dive_$1.mp4" && echo "dive $1 ok" || echo "dive $1 FAIL"
-}
-for n in $NAMES; do gen_dive "$n" & done ; wait
-```
+- **Architecture B (dives):** upload each solid-bg still (§0 upload lane), then per
+  scene: `openart_generate_video(model: "kling-3-omni", mode: "image2video", params:
+  {prompt, startFrame: <uploaded still ref>, ...KLING FINAL dive block})`. Jobs can run
+  concurrently — submit the batch, then wait on each historyId.
+- **Architecture A (legs):** strictly sequential. Leg 0 starts from scene-0's uploaded
+  still; each later leg's `startFrame` is the **previous leg's extracted last frame**
+  (§3, uploaded via §0). No `endFrame`. Eyeball each leg's last frame before chaining
+  the next (SKILL Step 4 camera grammar).
 
-Re-roll individual failures (503 / credit race are transient):
-`gen_dive shop`  (just that one).
+Download every result to `$WORK/dive_<name>.mp4`. Re-roll individual failures
+(transient errors and filter flags are per-job — never restart the batch).
 
 ## 3. Extract boundary frames — the seam handoff (Step 5)
 
@@ -119,9 +124,7 @@ For each adjacent pair, the connector's start = dive_i's LAST frame, end = dive_
 FIRST frame — extracted from the **rendered videos**, never the stills.
 
 ```bash
-set -- $NAMES
-prev=""
-for n in "$@"; do
+for n in $NAMES; do
   ffmpeg -v error -ss 0 -i "$WORK/dive_$n.mp4" -frames:v 1 -q:v 2 "$WORK/first_$n.png"      # establishing
   ffmpeg -v error -sseof -0.15 -i "$WORK/dive_$n.mp4" -frames:v 1 -q:v 2 "$WORK/last_$n.png" # interior
 done
@@ -129,30 +132,24 @@ done
 
 ## 4. Connector clips (Step 5)
 
-Prompt files at `$WORK/conn_<i>.txt` (i = 1..N-1). Iterate adjacent pairs:
+Prompt files at `$WORK/conn_<i>.txt` (i = 1..N-1). Skip any i whose
+`$WORK/conn_<i>.mp4` exists. For each adjacent pair (prev, next):
 
-```bash
-gen_conn() { # i startPng endPng          (end-image required → seedance/kling3_0 only)
-  [ -s "$WORK/conn_$1.mp4" ] && { echo "conn $1 cached"; return 0; }
-  higgsfield generate create "$VMODEL" --prompt "$(cat "$WORK/conn_$1.txt")" \
-    --start-image "$2" --end-image "$3" \
-    $VOPTS --aspect_ratio 16:9 --duration "$CONN_DUR" \
-    --wait --wait-timeout 20m --json > "$WORK/conn_$1.json" 2> "$WORK/conn_$1.err"
-  url=$(jq -r '.[0].result_url // empty' "$WORK/conn_$1.json")
-  [ -n "$url" ] && curl -fsSL "$url" -o "$WORK/conn_$1.mp4" && echo "conn $1 ok" || echo "conn $1 FAIL"
-}
-set -- $NAMES ; i=0 ; prev=""
-for n in "$@"; do
-  if [ -n "$prev" ]; then i=$((i+1)); gen_conn "$i" "$WORK/last_$prev.png" "$WORK/first_$n.png" & fi
-  prev="$n"
-done ; wait
-```
+1. Upload `$WORK/last_<prev>.png` and `$WORK/first_<next>.png` (§0 upload lane) — skip
+   uploads already made this run.
+2. `openart_generate_video(model: "kling-3-omni", mode: "image2video", params: {prompt,
+   startFrame: <last_<prev> ref>, endFrame: <first_<next> ref>, ...KLING FINAL
+   connector block})`.
+3. Wait, download to `$WORK/conn_<i>.mp4`.
+
+Connectors need `endFrame` — any SKILL Step 4 roster model accepts it; element-reference
+modes never do.
 
 ## 5. Encode everything for scrubbing (Step 6)
 
-Native resolution (1080p from seedance std; kling3_0 std returned **720p** in testing —
-never upscale, encode what ffprobe reports), crf 20, GOP 8, light sharpen, no audio,
-faststart. Same for dives + connectors.
+Native resolution — encode whatever ffprobe reports for the downloaded render (kling
+`std` is 720-class, `pro` 1080-class; **never upscale**), crf 20, GOP 8, light sharpen,
+no audio, faststart. Same for dives + connectors.
 
 ```bash
 enc() { ffmpeg -v error -y -i "$1" -an -vf "unsharp=5:5:0.8:5:5:0.0" \
@@ -168,10 +165,10 @@ Now the engine config's `sections[k].clip = assets/vid/<name>.mp4` and
 
 ## 5b. Posters — extract from the ENCODED clips (kills the still→video pop)
 
-The generated still is 3:2 and the clip is a 16:9 re-render of it, so if the still is
-the loading poster, the moment the video paints there's a visible crop/render jump —
-on the very first scene a visitor sees. Same doctrine as the connectors: hand off
-actual frames. The poster must be the encoded clip's own first frame:
+The clip is a *re-render* of the still, so if the still is the loading poster, the
+moment the video paints there's a visible render-drift jump — on the very first scene a
+visitor sees. Same doctrine as the connectors: hand off actual frames. The poster must
+be the encoded clip's own first frame:
 
 ```bash
 for n in $NAMES; do
@@ -220,16 +217,17 @@ done
 ```
 
 Thresholds from the frame-handoff physics: a true actual-frame handoff scores ≥0.95
-even after encoding; ≥0.90 pass, 0.75–0.90 warn (Seedance's end-image landed close but
-not exact — the engine crossfade usually covers it), <0.75 means a still was used as an
-endpoint or the wrong frame was extracted — regenerate, don't rationalize. Run this
-after every re-roll too: replacing one clip can silently break BOTH of its seams.
+even after encoding; ≥0.90 pass, 0.75–0.90 warn (the endFrame-conditioned render landed
+close but not exact — the engine crossfade usually covers it), <0.75 means a still was
+used as an endpoint or the wrong frame was extracted — regenerate, don't rationalize.
+Run this after every re-roll too: replacing one clip can silently break BOTH of its
+seams.
 
 ## 6. Mobile encodes (Step 6) — only if the user picked a mobile tier
 
 **Skip this section if the user chose the crop-safe tier in the Step 1
 interview.** Scrubbing sets `currentTime` every frame, and a phone decoder's **seek cost scales with
-how many frames it must decode from the nearest keyframe** — so a 1080p `-g 8` master
+how many frames it must decode from the nearest keyframe** — so a `-g 8` master
 that scrubs fine on a laptop stutters on a phone. A **smaller frame + tighter GOP** fixes
 that (and halves the bytes on cellular). Produce a `-m.mp4` sibling for every clip:
 
@@ -265,7 +263,7 @@ connectorsMobile = ['assets/vid/conn1-m.mp4', …];   // length N-1, in order
 
 If phone scrubbing still stutters, tighten the GOP further (`-g 2`, or `-g 1` for all-intra
 = instant seeks at the cost of larger files); if cellular weight is the bigger worry, raise
-`crf` (24–26) or drop to `scale=-2:600`. If the master is already 720p (e.g. kling3_0 std),
+`crf` (24–26) or drop to `scale=-2:600`. If the master is already 720-class (kling `std`),
 the mobile encode still pays off — the tighter GOP is what makes phone seeks cheap.
 Plain mobile-tier encodes stay 16:9 — the engine centre-crops them; for true portrait
 assets see §7.
@@ -276,40 +274,39 @@ The gold standard for mobile is a **differently-framed render, not a crop** (App
 re-art-directed per-breakpoint assets). Two levels:
 
 **Hero reframe (cheap).** For the 1–2 scenes whose focal subject can't hold a centre
-crop (usually hero + finale): regenerate JUST those stills at 9:16 (same prompt + style
-anchor, recompose vertically), render a 9:16 dive from each, encode with `encm()`
-settings, wire as that scene's `clipMobile`/`posterMobile`. Other scenes keep the
-cropped 16:9 mobile encode. Seams: a portrait dive still hands off within its own clip
-only, so nothing about the 16:9 chain changes — the phone crossfades between a cropped
-connector and the portrait dive; keep the reframed composition centred on the same focal
-point so the transition reads.
+crop (usually hero + finale): regenerate JUST those stills at 9:16 (same prompt + anchor
+style reference, recompose vertically), render a 9:16 dive from each (the clip inherits
+the still's portrait aspect), encode with `encm()` settings, wire as that scene's
+`clipMobile`/`posterMobile`. Other scenes keep the cropped 16:9 mobile encode. Seams: a
+portrait dive still hands off within its own clip only, so nothing about the 16:9 chain
+changes — the phone crossfades between a cropped connector and the portrait dive; keep
+the reframed composition centred on the same focal point so the transition reads.
 
 **Full portrait chain (gold, ≈2× video credits).** A complete parallel 9:16 chain:
 
-- 9:16 stills (or reuse 16:9 stills as `--image` style refs and prompt the vertical
-  recomposition), then the full Step 4/5 flow at `--aspect_ratio 9:16` — own frame
-  extractions, own connectors, own handoffs. **Aspect ratios cannot mix mid-chain**: a
-  9:16 clip can't continue a 16:9 frame, so the portrait chain is generated end-to-end
-  as its own world.
+- 9:16 stills (or reuse the 16:9 stills as `image2image` style references and prompt the
+  vertical recomposition), then the full Step 4/5 flow seeded from portrait frames — own
+  frame extractions, own connectors, own handoffs. **Aspect ratios cannot mix
+  mid-chain**: a 9:16 clip can't continue a 16:9 frame, so the portrait chain is
+  generated end-to-end as its own world.
 - Run the §5c SSIM gate on the portrait chain separately (its own seam list).
 - Encode with `encm()` (already 720-class; portrait at `scale=720:-2`), extract portrait
   posters, wire ALL of it as `clipMobile`/`connectorsMobile`/`posterMobile`.
-- Same-model rule, same NSFW re-roll budget — everything from the 16:9 chain applies.
+- Same-model rule, same filter re-roll budget — everything from the 16:9 chain applies.
 
 State the credit cost to the user before starting either tier (SKILL Step 1.6).
 
 ## Notes
 
-- `.[0].result_url` is the field on the `--wait --json` job object. `.min_result_url` is
-  a lower-res preview if you ever want it.
-- **NSFW fallback across models**: if one clip keeps getting flagged on seedance after
-  re-rolls + prompt scrubbing, regenerate just that clip on `kling3_0` with the SAME
-  start/end frames: `VMODEL=kling3_0; VOPTS="--mode std --sound off"; gen_conn 3 …` —
-  then restore your chain model. See SKILL Gotchas for the trade-off.
-- **Previz**: the draft-tier pass is the recommended default — see the setup block at
-  the top. Don't reach for reference-only models for it: without `--start/--end-image`
-  they can't hold a seam, so their output can't be chained (Step 4 rule).
-- If a whole batch stalls, check `higgsfield workspace list` for credits and
-  `$WORK/*.err` for the reason.
-- Concurrency: launching ~5–6 gens at once is fine; much more can trigger transient
-  credit/race errors — stagger or re-roll.
+- **Content-filter fallback across models**: if one clip keeps getting flagged on Kling
+  after re-rolls + prompt scrubbing, regenerate just that clip on `byte-plus-seedance-2`
+  (`image2video`, `generateAudio: false`, same uploaded start/end frames) — then return
+  to the chain model. See SKILL Gotchas for the trade-off.
+- **Draft tier**: same model at `resolution: "std"` — see the setup block. Don't reach
+  for element-reference models for drafts: without startFrame/endFrame they can't hold a
+  seam, so their output can't be chained (SKILL Step 4 rule).
+- If a whole batch stalls, check `openart_account_get` for credits and each job's
+  `openart_creation_get(historyId)` for the failure reason.
+- Concurrency: a handful of concurrent video jobs is fine (architecture B dives,
+  connectors); architecture A legs are inherently sequential. Re-roll individual
+  failures rather than restarting a batch.

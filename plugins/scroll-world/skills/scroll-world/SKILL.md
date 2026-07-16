@@ -2,30 +2,31 @@
 name: scroll-world
 description: >
   Build an immersive scroll-scrubbed "fly through the world" landing page for any
-  industry or brand using Higgsfield. As the visitor scrolls, a pre-rendered camera
+  industry or brand using OpenArt. As the visitor scrolls, a pre-rendered camera
   flies from outside each scene into its interior, then flows on to the next scene
   with NO cuts — one continuous connected flight (Emons-style isometric diorama world,
   or any art direction you pick). The skill interviews the user for the topic, the
-  story beats/sections, and brand kit, then generates cohesive scenes + seamless camera
-  clips with Higgsfield and wires a portable, framework-agnostic scroll-scrub engine.
-  Use when the user wants a "3D world" / "browse-through-the-industry" hero, a scroll
-  cinematic, a diorama landing, or to turn a business into a scrollable world.
-allowed-tools: Bash, Read, Write, Edit, AskUserQuestion, Skill
+  story beats/sections, and brand kit, then generates cohesive scenes (Seedream 5.0 Pro)
+  + seamless camera clips (Kling 3 Omni) with OpenArt and wires a portable,
+  framework-agnostic scroll-scrub engine. Use when the user wants a "3D world" /
+  "browse-through-the-industry" hero, a scroll cinematic, a diorama landing, or to
+  turn a business into a scrollable world.
+allowed-tools: Bash, Read, Write, Edit, AskUserQuestion, Skill, mcp__openart__openart_model_list, mcp__openart__openart_model_form_get, mcp__openart__openart_model_cost, mcp__openart__openart_generate_image, mcp__openart__openart_generate_video, mcp__openart__openart_creation_get, mcp__openart__openart_creation_wait, mcp__openart__openart_creation_list, mcp__openart__openart_upload_sign, mcp__openart__openart_upload_pick, mcp__openart__openart_upload_list, mcp__openart__openart_account_get
 ---
 
 # scroll-world
 
 Produces a landing page where **scroll drives a camera**: it dives from outside a scene
 into its interior, then flies out and into the next scene, continuously, with no visible
-cuts. The visuals are AI-generated (Higgsfield); the page just scrubs pre-rendered video
+cuts. The visuals are AI-generated (OpenArt); the page just scrubs pre-rendered video
 by scroll position. This is the same technique behind Apple's scroll-through product
 pages — the camera genuinely moves, scroll only drives time.
 
-**What you generate:** N scene stills (anchor-gated) → N "dive-in" camera clips → N-1
-"connector" clips that join consecutive scenes seamlessly → encoded clips + extracted
-posters → an automated SSIM seam check → a portable scrub engine that plays the whole
-chain as one flight. Chain clips render on the cheap previz tier first by default;
-full-model credits are spent only after the user approves the draft.
+**What you generate:** N scene stills (anchor-gated, **Seedream 5.0 Pro**) → N "dive-in"
+camera clips (**Kling 3 Omni**) → N-1 "connector" clips that join consecutive scenes
+seamlessly → encoded clips + extracted posters → an automated SSIM seam check → a
+portable scrub engine that plays the whole chain as one flight. Finals render at Kling's
+`pro` resolution by default; `std` is the draft/lean tier and `4k` the opt-in gold tier.
 
 **The one rule that makes or breaks it:** seams must be *frame-identical*. Read
 [The seamless chain](#step-5--the-seamless-chain-the-critical-part) before generating any
@@ -35,29 +36,63 @@ connector. Getting this wrong is the single most common failure and produces a v
 Do not assume a frontend framework. The scrub engine in `references/scrub-engine.js` is
 self-contained vanilla JS (it builds its own DOM + injects its own CSS into a container
 you give it), so it drops into plain HTML, Next.js, Vue, a Python-served page, anything.
-The value of this skill is the Higgsfield pipeline, the prompts, and the seam method —
+The value of this skill is the OpenArt pipeline, the prompts, and the seam method —
 not the framework.
 
 ---
 
 ## Step 0 — Bootstrap
 
-1. **Higgsfield CLI.** If `higgsfield` is not on `$PATH`, install per the
-   `higgsfield-generate` skill. If `higgsfield workspace list` fails auth, ask the user
-   to run `higgsfield auth login` (interactive OAuth — you cannot run it) and, if needed,
-   `higgsfield workspace set <id>`. Confirm there are enough credits: a run is `N` image
-   gens + `N` video gens (architecture A) or `(2N-1)` video gens (architecture B), plus
-   re-rolls — the Step 1 budget tier sets `N`.
-2. **ffmpeg / ffprobe** on `$PATH` (frame extraction + encoding).
-3. **An image tool** for background knockout if you want floating scenes: PIL
+1. **OpenArt MCP.** The `mcp__openart__*` tools must be available and authenticated
+   (OAuth — if calls fail auth, ask the user to run `/mcp` and sign in to OpenArt; you
+   cannot complete the OAuth flow yourself). Check credits with `openart_account_get`:
+   a run is `N` image gens + `N` video gens (architecture A) or `(2N-1)` video gens
+   (architecture B), plus re-rolls — the Step 1 budget tier sets `N`.
+2. **The OpenArt job flow — always this sequence, never guessed params:**
+   `openart_model_list` (resolve the model id) → `openart_model_form_get(model, mode)`
+   (the current schema — fields drift; never reuse a stale one) →
+   `openart_model_cost(model, mode, params)` (price the EXACT config) →
+   `openart_generate_image` / `openart_generate_video` → the job returns a `historyId`
+   with status PENDING. In a CLI/text host, poll with `openart_creation_wait(historyId)`
+   — video often outlasts one wait window; if it returns STILL_RUNNING, call it again
+   with the same historyId. Download every finished result to a local file (curl the
+   media URL) — the pipeline needs local pixels for frame extraction.
+3. **Local reference frames go up through the upload lane.** Chained clips are seeded
+   with frames you extracted locally, so each one must be uploaded before generating:
+   `openart_upload_sign` (mediaType `image`, exact byte `size`, `contentType`,
+   purpose `create-video`) → HTTP PUT the bytes to the returned `signURL` → pass the
+   returned reference object as `startFrame` / `endFrame`. Give each upload a
+   meaningful `label` ("leg-2 last frame") — it's how you audit a chain later.
+4. **ffmpeg / ffprobe** on `$PATH` (frame extraction + encoding).
+5. **An image tool** for background knockout if you want floating scenes: PIL
    (`python3 -c "import PIL"`), or `cwebp`/`sips`. Optional — see Step 3.
-4. Caveats: macOS ships **bash 3.2** (no `declare -A`); don't use associative arrays in
-   scripts. Higgsfield generations take **3–8 min each** — always run them detached
-   (background) and poll, never a foreground blocking call. Reference-by-job-UUID is
-   rejected by media flags — pass **local file paths** to `--image/--start-image/--end-image`.
-   Video models differ in accepted params (e.g. Kling has no `--resolution`) and in whether
-   they support start/end-image conditioning at all — before batching, confirm the chosen
-   model's schema with `higgsfield model get <job_type>` and see the Step 4 model table.
+6. Caveats: macOS ships **bash 3.2** (no `declare -A`); don't use associative arrays in
+   scripts. Video generations take **minutes each** — in a CLI host, `openart_creation_wait`
+   between batched submissions rather than blocking on each job serially where the host
+   allows concurrent jobs. Kling 3 Omni's `image2video` has **no aspect-ratio param** —
+   the clip inherits the start frame's aspect, which is why stills are generated at 16:9
+   (Step 2). Video models differ in accepted params — before batching, confirm the chosen
+   model's schema with `openart_model_form_get` and see the Step 4 model table.
+
+### Default-model availability gate (image)
+
+The still-image default is **Seedream 5.0 Pro** — resolve it from `openart_model_list`
+by display name at run time; never hardcode or infer a slug. As of 2026-07 it is live in
+OpenArt's web UI but **not yet in the MCP catalog** (which lists Seedream 4.5 and
+Seedream 5 Lite). If Pro is absent from `openart_model_list`:
+
+- Do **not** silently downgrade — especially not to Seedream 5 Lite.
+- Tell the user, and offer: (a) generate the stills in the OpenArt web UI on 5.0 Pro and
+  hand them to you (they enter the pipeline through the upload lane unchanged), or
+  (b) an explicitly approved fallback — `gpt-image-2` (crisp isometric illustration,
+  clean solid backgrounds — the strongest stand-in for this skill's diorama look),
+  `byte-plus-seedream-4-5`, or `nano-banana-pro`.
+- Whatever is chosen, ONE image model for all N stills — cohesion dies across mixed
+  renderers.
+
+The video default **Kling 3 Omni** (`kling-3-omni`) IS on the MCP catalog — verified
+`image2video` with required `startFrame` + optional `endFrame`, which is exactly the
+frame-locking this skill needs.
 
 ---
 
@@ -76,8 +111,8 @@ default. Cover:
    industry/product + a one-line pitch (e.g. "a bubble tea company, from leaf to last
    sip"), and a brand name if they have one; otherwise you'll propose one below.
 2. **Brand kit** — offer three paths, pick one:
-   - Import from a URL: `higgsfield marketing-studio brand-kits fetch --url <site> --wait`
-     (pulls name, colours, tone). Then read it back with `brand-kits list --json`.
+   - The user points you at their site: read it and derive name, palette, and tone
+     yourself (view source / fetch the page; pull the CSS custom props or dominant hexes).
    - The user hands you palette + name + tone directly.
    - You propose a palette + name and let them approve.
    Capture **4–6 named hex values**, a display name, and a tone word or two.
@@ -88,21 +123,26 @@ default. Cover:
 4. **Budget tier — ask BEFORE proposing the journey; video generations dominate cost.**
    The bill scales with scene count and architecture: architecture A (forward take) =
    `N` videos, architecture B (dives + connectors) = `2N-1` videos, plus `N` stills and
-   a ~20–30% re-roll buffer. A 6-scene arch-B run is ~17 generations — a serious bite
-   out of a subscription. Use `AskUserQuestion` with concrete numbers:
-   - **Lean (~8 gens)** — 4 scenes, architecture A (4 stills + 4 legs), skip previz
-     (small runs re-roll cheaper than a draft pass). Same site, same continuous flight —
-     just 4 beats instead of 6.
-   - **Standard (~11–13 gens)** — 5 scenes; arch A (10 gens) or arch B (5 + 9 = 14).
-   - **Showcase (~17+ gens)** — 6–7 scenes, full arch-B world, previz pass, mobile tiers.
+   a ~20–30% re-roll buffer. Reference prices (Kling 3 Omni image2video, sound off,
+   quoted 2026-07 — **re-quote with `openart_model_cost` at run time, prices drift**):
+   `std` 5s = 125 / 8s = 200 credits; `pro` 5s = 175 / 8s = 280; `4k` 8s = 960.
+   Stills: Seedream 5.0 Pro was ~60 credits per 2K frame in the UI. Use
+   `AskUserQuestion` with concrete credit totals computed from live quotes:
+   - **Lean (~4 scenes, architecture A)** — 4 stills + 4 legs. At `pro` ≈ 1,100–1,400
+     credits all-in; at `std` (720-class, honest tradeoff) roughly 30% less. Same site,
+     same continuous flight — just 4 beats instead of 6.
+   - **Standard (~5 scenes)** — arch A (5 legs) ≈ 1,400–1,700 at `pro`; arch B
+     (5 dives + 4 connectors) ≈ 2,100–2,500.
+   - **Showcase (6–7 scenes, full arch-B world)** — ≈ 2,500–3,500 at `pro`; `4k`
+     finals or a portrait chain multiply from there (a 4k 8s clip alone is ~960).
    **Fewer scenes ≠ thinner site.** 3–4 well-chosen beats read as a complete world: give
    each scene more scroll distance (`scroll: 1.6–2`) and `linger`, and let the copy
    carry more per beat. A tight 4-scene world beats a budget-starved 6-scene one.
    Two more levers when the user wants the B aesthetic on a lean budget: connectors are
    **individually optional** (a `null` slot crossfades that seam directly — honest
    tradeoff: that one transition is a dissolve, not a flight; spend connectors on the
-   seams around the hero scenes) and `seedance_2_0_mini` can BE the final model if the
-   user accepts 720p — it frame-locks, so the site stays seamless.
+   seams around the hero scenes) and `std` resolution can BE the final tier if the
+   user accepts 720-class output — it frame-locks identically, so the site stays seamless.
 5. **The journey (sections)** — the ordered scenes the camera flies through, **sized to
    the budget tier**. Propose a set derived from the subject's own value chain and let
    the user edit. Boba example (6-scene showcase): farms → pearl kitchen → flagship shop
@@ -132,21 +172,21 @@ default. Cover:
      crop. Offer only when the user signals mobile traffic matters or the budget is
      loose.
 
-Video model is **not** an interview question — default `seedance_2_0` silently. If the user
-names a preference, honor it **only if it can frame-lock seams** (Step 4 roster:
-`seedance_2_0`, `kling3_0`, `seedance_2_0_mini`). This skill only ships seamless output, so
-a model that can't frame-lock is declined with a one-line why, not substituted in — use a
-roster model instead.
+Video model is **not** an interview question — default `kling-3-omni` silently. If the
+user names a preference, honor it **only if it can frame-lock seams** (Step 4 roster —
+its `image2video` form must take `startFrame`, and `endFrame` too for architecture B).
+This skill only ships seamless output, so a model that can't frame-lock is declined with
+a one-line why, not substituted in — use a roster model instead.
 
 **Close the interview with a spend estimate — get explicit go-ahead before any
-generation.** State the bill in plain numbers from the chosen budget tier: `N` image
-gens + video gens (`N` for architecture A, `2N-1` for B; previz adds a mini-tier chain
-on showcase runs) + a re-roll budget (~20–30% extra on interiors, thanks to the NSFW
-filter), plus any mobile-tier extras, and roughly how long it runs (gens are 3–8 min
-each; architecture A is sequential). The user approves the spend once, here — after
-that the only further gates are the anchor-still approval (Step 2) and the previz
-review (Step 4), both of which exist to keep the big spend from being wasted, not to
-re-ask permission.
+generation.** Quote the bill from live `openart_model_cost` calls at the chosen tier's
+exact configs: `N` image gens + video gens (`N` for architecture A, `2N-1` for B) + a
+re-roll budget (~20–30% extra on interiors, thanks to content filters), plus any
+mobile-tier extras, and roughly how long it runs (video gens are minutes each;
+architecture A is sequential). The user approves the spend once, here — after that the
+only further gates are the anchor-still approval (Step 2) and the optional draft review
+(Step 4), both of which exist to keep the big spend from being wasted, not to re-ask
+permission.
 
 Keep the scroll mechanic fixed (continuous fly-through) — that's the point of the skill.
 See `references/prompts.md` for the intake checklist and copy structure.
@@ -156,34 +196,36 @@ See `references/prompts.md` for the intake checklist and copy structure.
 ## Step 2 — Generate the scene stills
 
 One image per section, **all sharing the same style preamble** for cohesion. Default
-model **`gpt_image_2`** (crisp, great at isometric illustration; returns a solid/white
-background which is perfect for floating diorama "islands"). Use `nano_banana_2` only if
-the brief is character/cartoon-heavy (note: `nano_banana_2` is a CLI alias — it resolves
-to `nano_banana_pro`; it won't appear under that name in `higgsfield model list`).
+model **Seedream 5.0 Pro** (resolve per the Step 0 availability gate), `text2image`
+mode, at the highest 2K-class quality the current form exposes. Generate stills at
+**16:9** — Kling's `image2video` has no aspect param, the clip inherits the still's
+aspect, and the chain is 16:9 (portrait chains render their own 9:16 stills, pipeline §7).
 
 Prompt shape (full templates in `references/prompts.md`):
 
 ```
 <STYLE PREAMBLE, identical every time>. On a plain solid <bg> background with a soft
-contact shadow. <PALETTE hexes>. No text, no letters, no logos, centered, 3:2.
+contact shadow. <PALETTE hexes>. No text, no letters, no logos, centered, 16:9.
 Subject: <what is in THIS diorama>.
 ```
 
 - **Anchor first — never batch all N cold.** Generate ONE anchor still (the most
   representative scene), show it to the user, and iterate the style preamble until they
-  approve. Only then batch the remaining N-1 **with the approved anchor passed as
-  `--image`** to lock the style. A style miss on the anchor costs 1 gen; after a cold
-  batch it costs N. This is a hard gate — do not proceed past an unapproved anchor.
-- Batch the rest concurrently, detached. Command per scene:
-  `higgsfield generate create gpt_image_2 --prompt "$(cat scene_i.txt)" --image anchor.png --aspect_ratio 3:2 --resolution 2k --quality high --wait --wait-timeout 15m --json > scene_i.json 2>scene_i.err`
-- Result URL is `.[]0.result_url` in the `--wait --json` output. `curl` it down.
-- A generation may fail transiently (HTTP 503) — re-roll that one individually; don't
-  restart the batch.
+  approve. Only then batch the remaining N-1 **in `image2image` mode with the approved
+  anchor as the reference image** to lock the style. A style miss on the anchor costs
+  1 gen; after a cold batch it costs N. This is a hard gate — do not proceed past an
+  unapproved anchor.
+- Batch the rest as concurrent jobs (submit, then wait on each historyId). Fetch the
+  `image2image` form first (`openart_model_form_get`) and fill it exactly — reference
+  image field names drift between models; never guess.
+- Download every result to `$WORK/still_<name>.png` — local pixels feed Step 4.
+- A generation may fail transiently — re-roll that one individually; don't restart the
+  batch.
 - **Review the batch before continuing.** It must read as one cohesive world (same
   angle, palette, light). Re-roll any off-style scene individually — the anchor style
   lock stays in force.
 
-See `references/pipeline.md` for the exact batch script (idempotent — re-runs skip
+See `references/pipeline.md` for the exact per-asset recipes (idempotent — re-runs skip
 finished assets, so a crash or re-roll never repays for done work).
 
 ---
@@ -210,60 +252,59 @@ pick by aesthetic.
 ### Video model — pick ONE for the whole chain
 
 **This skill only ships seamless output**, so the only usable models are ones that can
-frame-lock a seam: every chained clip must accept `--start-image`, and connectors also
-need `--end-image`. That capability — not preference — is the selection rule. Check any
-model with `higgsfield model get <job_type>` and **skip anything whose media inputs are
-reference-only** (no start/end image): it can only *condition* a generation, not
-*continue* a shot, so it physically can't hold a seam. Schemas below were confirmed
-against the CLI:
+frame-lock a seam: every chained clip must accept a `startFrame`, and connectors also
+need an `endFrame`. That capability — not preference — is the selection rule. Check any
+model with `openart_model_form_get(model, "image2video")` and **skip anything whose
+image inputs are reference-only** (element/identity references, no start/end frame): it
+can only *condition* a generation, not *continue* a shot, so it physically can't hold a
+seam. `element2video` is never a chain mode for the same reason. Schemas below were
+confirmed against the live MCP (2026-07):
 
-| Model | start/end image | Notes |
+| Model | startFrame / endFrame | Notes |
 |---|---|---|
-| `seedance_2_0` (default) | ✓ / ✓ | Full chain (legs + connectors). `--mode std --resolution 1080p`. Its NSFW filter is the touchy one (see Gotchas). |
-| `kling3_0` | ✓ / ✓ | Full chain — tested: `--mode std --sound off --duration 5` with start+end images accepted, seams frame-lock cleanly. **No `--resolution` param** (don't pass one; `--mode std` returns **720p native** — encode what ffprobe reports, never upscale). Sound defaults **on** → `--sound off`. `--duration` default 5, try 10 for legs. Different content filter than Seedance — the sanctioned NSFW fallback. |
-| `seedance_2_0_mini` | ✓ / ✓ | Cheap draft tier that keeps frame-locking (720p). The previz tier: run the whole chain here first, then re-render final legs on the full model — still seamless, so it translates directly. |
+| `kling-3-omni` (default) | ✓ / ✓ | Full chain (legs + connectors). `resolution: std\|pro\|4k` (final default **pro**; `std` = draft/lean tier; `4k` = opt-in gold), `duration` 3–15s, **`generateSound` defaults ON — always set `false`**, `multiShot: false` (true = editorial cuts, fatal here), `videoCount: 1`, prompt ≤2500 chars. No aspect param — inherits the start frame's aspect (why stills are 16:9). |
+| `byte-plus-seedance-2` | ✓ / ✓ | The content-filter fallback (different provider filter than Kling). 480p–4k, 4–15s, `aspectRatio`, `generateAudio` defaults ON → set `false`, `mode: normal\|fast`. Expensive (~400 credits/5s at 720p) — single-clip rescue, not a chain model. |
+| `byte-plus-seedance-2-mini` | ✓ / ✓ | Cheaper rescue tier, 480/720p only. Note it is NOT cheaper than Kling `std` (a mini 8s/720p quoted ~320 vs Kling std 8s ~200) — reach for it only as a second filter fallback. |
+| `wan2-7` | ✓ / ✓ | Alternate full-chain candidate, 720p/1080p, 2–15s, has `negativePrompt`. **Turn `enablePromptExpansion` off** for chained clips — a rewriter can mangle the verbatim motion-handoff clauses. Not the default; use only by explicit user preference. |
 
-Those three are the roster — all do both architectures. (`kling3_0_turbo` also frame-locks
-via `--start-image`, but has no `--end-image`, so it's architecture-A-only and can't make
-connectors; it also takes a different flag set — no `--mode`, has `--resolution` — so it
-doesn't drop into the pipeline as-is. It's not in the default roster; only reach for it, and
-wire it by hand, if architecture A's sequential render time is a proven bottleneck and you've
-benchmarked it as actually faster.)
-
-**Previz first (default, not optional-extra).** Unless the run is small (≤4 scenes),
-render the whole chain on `seedance_2_0_mini` first. It frame-locks, so everything that
-matters — journey order, camera grammar, seam continuity, copy pacing against the scrub —
-is validated at draft cost; assemble the page from the previz clips and review it with
-the user before a single full-model credit is spent. Then clear the draft clips, flip
-`$VMODEL`, and re-render final (stills are reused; the pipeline's idempotency makes the
-second pass mechanical — `references/pipeline.md`, setup block).
+**Drafts: same model, `std` resolution — not a different model.** Kling `std` costs
+~70% of `pro` at the same duration, so a full previz pass is no longer the cheap
+insurance it was on other providers — **default to NO previz pass.** The risk controls
+that matter are already in the pipeline: the anchor gate (Step 2), eyeballing each leg's
+last frame before chaining the next (below), and the SSIM gate (pipeline §5c). Render a
+`std` draft chain first only when (a) finals are `4k` (960/clip — a 200-credit std draft
+per clip is then obviously worth it) or (b) the journey/camera grammar itself is
+uncertain — and consider drafting only the 1–2 riskiest legs, not the whole chain.
+Because draft and final are the same model, everything a draft validates translates
+exactly; stills are reused as-is on the re-render.
 
 Rules:
 - **One model for all chained clips.** Each renderer has its own motion/color/grain
   character; mixing models mid-chain keeps *position* continuity (frames still hand off)
   but the render-character shift reads as a subtle pop. The one sanctioned exception is
-  the NSFW fallback for a single stubborn clip (Gotchas) — a slight character shift on
-  one 5s connector beats a missing connector.
-- Default to `seedance_2_0`; honor a user's stated preference **only if the model
+  the content-filter fallback for a single stubborn clip (Gotchas) — a slight character
+  shift on one 5s connector beats a missing connector.
+- Default to `kling-3-omni`; honor a user's stated preference **only if the model
   qualifies** (frame-locking). If it doesn't, say so and use a supported model — never
   ship a non-seamless build to satisfy a model request.
-- The pipeline scripts take the model as `$VMODEL` with per-model flags already cased
-  out (`references/pipeline.md`).
+- Fetch the form and price the exact config (`openart_model_cost`) before every batch —
+  fields and prices drift; `references/pipeline.md` carries the current param blocks.
 
 ### A) Continuous forward take — RECOMMENDED for grounded / realistic / walkthrough
 One camera that only ever glides **forward**, first scene through last, as a single take.
 Generate the legs **sequentially**: leg 0 from scene-0's still (glide forward into it);
-then each leg's `--start-image` = the **previous leg's ACTUAL last frame** (extract with
-ffmpeg), prompt *"continue gliding smoothly FORWARD into [scene i], never pulling back"*
-(or an expressive mid-leg move under the motion-handoff contract — see **Camera grammar**
-below), and **no `--end-image`** — an end-image of a wide establishing shot forces the
-camera to pull back, which is the #1 cause of stutter. Extract each leg's last frame to feed the
-next. Result: every seam is frame-identical **and** the camera never reverses. There are
-**no connectors** (skip Step 5) — the legs ARE the journey. Wire each leg as a section
-clip with `connectors: []` and a small `crossfade` (~0.08). Even without an `--end-image`
-the legs still arrive at distinct rooms (the prompt steers the content). Cost: strictly
-**sequential** (can't parallelize) and slower; interiors trip the NSFW filter, so build in
-re-rolls (3 attempts/leg).
+then each leg's `startFrame` = the **previous leg's ACTUAL last frame** (extract with
+ffmpeg, upload via the Step 0 upload lane), prompt *"continue gliding smoothly FORWARD
+into [scene i], never pulling back"* (or an expressive mid-leg move under the
+motion-handoff contract — see **Camera grammar** below), and **no `endFrame`** — an
+end-image of a wide establishing shot forces the camera to pull back, which is the #1
+cause of stutter. Extract each leg's last frame to feed the next. Result: every seam is
+frame-identical **and** the camera never reverses. There are **no connectors** (skip
+Step 5) — the legs ARE the journey. Wire each leg as a section clip with
+`connectors: []` and a small `crossfade` (~0.08). Even without an `endFrame` the legs
+still arrive at distinct rooms (the prompt steers the content). Cost: strictly
+**sequential** (can't parallelize) and slower; interiors trip content filters, so build
+in re-rolls (3 attempts/leg).
 
 ### B) Dive-in + aerial connector — only for diorama / miniature / god's-eye worlds
 A "dive into each scene" clip + a connector that pulls **up and out** and flies over to the
@@ -318,21 +359,20 @@ must be consistent in both directions (a seam that reads fine forward reads as a
 backward too if velocity flips).
 
 **For B**, one camera flight per scene: starts high/outside, descends into the interior,
-structure opens. Model: the chain model you picked above (default **`seedance_2_0`**),
-`--start-image = the scene still`.
+structure opens. Model: the chain model you picked above (default **`kling-3-omni`**),
+`startFrame` = the scene still (uploaded).
 
 - Use the **solid-background still** (not the knocked-out transparent one) as the
-  start image, so the video has a full frame.
+  start frame, so the video has a full frame.
 - Prompt: "Single continuous cinematic camera move, no cuts. Begin high and far looking
   at the whole <scene> from outside … descend and fly inside toward <focal point> … the
   roof/walls gently open to reveal the interior. <style>, smooth graceful slow motion.
   No text." (Template in `references/prompts.md`.)
-- Params (seedance): `--mode std --resolution 1080p --aspect_ratio 16:9 --duration 8`.
-  For Kling: drop `--resolution` (no such param), add `--sound off`, `--duration 10`.
-  Do **not** pass `--generate-audio` (it errors on seedance; audio is wasted anyway —
-  you'll mute).
-- Run concurrently, detached, then download each `.result_url`. Re-roll individual
-  failures. Keep the raw 1080p sources — you need their frames next.
+- Params (kling-3-omni): `{ "resolution": "pro", "duration": 8, "generateSound": false,
+  "multiShot": false, "videoCount": 1 }` + prompt + startFrame. Expressive legs can take
+  `duration: 10`.
+- Submit the jobs, wait on each historyId, download each result. Re-roll individual
+  failures. Keep the raw downloaded sources — you need their frames next.
 
 ---
 
@@ -347,15 +387,15 @@ flies from the end of scene i out and into the start of scene i+1. **Both of its
 endpoints must be the ACTUAL RENDERED FRAMES of the neighbouring clips — never the
 original diorama still.**
 
-Why: every Higgsfield generation renders slightly differently. If a connector *ends* on
-a fresh render of "the kitchen diorama," but the next dive clip *starts* on its own
-different render of that same diorama, the two won't match and you get a pop at the seam.
+Why: every generation renders slightly differently. If a connector *ends* on a fresh
+render of "the kitchen diorama," but the next dive clip *starts* on its own different
+render of that same diorama, the two won't match and you get a pop at the seam.
 The fix is to hand off the exact pixels:
 
 ```
 For each connector between dive_i and dive_{i+1}:
-  start-image = the LAST frame extracted from dive_i's rendered video
-  end-image   = the FIRST frame extracted from dive_{i+1}'s rendered video
+  startFrame = the LAST frame extracted from dive_i's rendered video
+  endFrame   = the FIRST frame extracted from dive_{i+1}'s rendered video
 ```
 
 Now every seam is frame-identical on *both* sides:
@@ -368,16 +408,18 @@ ffmpeg -sseof -0.15 -i dive_i.mp4   -frames:v 1 -q:v 2 dive_i_last.png    # inte
 ffmpeg -ss 0      -i dive_{i+1}.mp4 -frames:v 1 -q:v 2 dive_next_first.png # establishing of i+1
 ```
 
-Generate the connector (`--duration 5` is plenty). Connectors need `--end-image`, so the
-model must accept it — any roster model does (`seedance_2_0`, `seedance_2_0_mini`,
-`kling3_0`):
+Upload both frames (Step 0 upload lane — sign, PUT, keep the returned reference
+objects), then generate the connector (`duration: 5` is plenty). Connectors need
+`endFrame`, so the model must accept it — any roster model does:
 
-```bash
-higgsfield generate create "$VMODEL" \
-  --prompt "$(cat connector_i.txt)" \
-  --start-image dive_i_last.png --end-image dive_next_first.png \
-  $VOPTS --aspect_ratio 16:9 --duration 5 --wait --json
-# seedance: VOPTS="--mode std --resolution 1080p"; kling3_0: VOPTS="--mode std --sound off"
+```
+openart_generate_video(model: "kling-3-omni", mode: "image2video", params: {
+  prompt: <connector prompt>,
+  startFrame: <uploaded dive_i last-frame ref>,
+  endFrame:   <uploaded dive_{i+1} first-frame ref>,
+  resolution: "pro", duration: 5,
+  generateSound: false, multiShot: false, videoCount: 1
+})
 ```
 
 Connector prompt: "Single continuous camera move, no cuts. Pull up and back out of
@@ -385,10 +427,11 @@ Connector prompt: "Single continuous camera move, no cuts. Pull up and back out 
 above <scene i+1>, beginning to descend toward it. Seamless flowing aerial transition.
 <style>. No text." (Template in `references/prompts.md`.)
 
-Insurance: Seedance lands *close* to the end-image but not always pixel-perfect, so the
-engine still applies a **short crossfade** (a few frames) at each seam. Frame-matched
-endpoints + a small crossfade = no visible cut. Never skip the actual-frame handoff and
-rely on the crossfade alone; a big content jump can't be hidden by a crossfade.
+Insurance: an end-frame-conditioned render lands *close* to the endFrame but not always
+pixel-perfect, so the engine still applies a **short crossfade** (a few frames) at each
+seam. Frame-matched endpoints + a small crossfade = no visible cut. Never skip the
+actual-frame handoff and rely on the crossfade alone; a big content jump can't be hidden
+by a crossfade.
 
 Whether a handoff actually held is **machine-checkable** — don't wait for the browser
 QA to find out. After encoding, run the SSIM seam check (`references/pipeline.md` §5c):
@@ -410,10 +453,10 @@ often gotten wrong:
    in-memory object URL** (blobs are always fully seekable). The engine does this.
    Because of it, you do **not** need all-intra video.
 2. **Don't shrink quality to get smooth seeks.** Encode at the **native resolution**
-   (1080p from Seedance — don't downscale), `crf ~20`, a **small GOP** (`-g 8`) rather
-   than all-intra (all-intra bloats an 8s clip to ~25 MB; GOP 8 is ~8 MB and scrubs
-   fine via blob). Strip audio, add faststart, and a light `unsharp` counters video
-   softness:
+   (whatever ffprobe reports for the downloaded render — never upscale), `crf ~20`, a
+   **small GOP** (`-g 8`) rather than all-intra (all-intra bloats an 8s clip to ~25 MB;
+   GOP 8 is ~8 MB and scrubs fine via blob). Strip audio, add faststart, and a light
+   `unsharp` counters video softness:
 
 ```bash
 ffmpeg -i src.mp4 -an -vf "unsharp=5:5:0.8:5:5:0.0" \
@@ -423,19 +466,19 @@ ffmpeg -i src.mp4 -an -vf "unsharp=5:5:0.8:5:5:0.0" \
 
 Encode all 2N-1 clips (dives + connectors) with the same settings for uniform quality.
 
-**Extract posters from the ENCODED clips** (`references/pipeline.md` §5b). The still is
-a 3:2 image; the clip is a 16:9 *re-render* of it — if the still is the loading poster,
-the first video paint visibly jumps (crop + render drift) on the very first scene a
-visitor sees. Same doctrine as the connectors, applied to seam zero: the poster must be
-the clip's own extracted first frame. Wire it as `sections[k].poster` (Step 7); keep the
-still as the reduced-motion artwork.
+**Extract posters from the ENCODED clips** (`references/pipeline.md` §5b). The clip is
+a *re-render* of the still — if the still is the loading poster, the first video paint
+visibly jumps (render drift) on the very first scene a visitor sees. Same doctrine as
+the connectors, applied to seam zero: the poster must be the clip's own extracted first
+frame. Wire it as `sections[k].poster` (Step 7); keep the still as the reduced-motion
+artwork.
 
 Then run the **automated seam check** (`references/pipeline.md` §5c) before touching a
 browser — every seam SSIM ≥0.90 or you have a redo, not a QA note.
 
 **Mobile encodes (only if the user picked a tier beyond crop-safe at Step 1.6).** Phone
 video decoders seek far slower than a laptop's, and seek cost scales with GOP length, so
-the 1080p `-g 8` master that scrubs smoothly on desktop can stutter on a phone. Produce a
+the `-g 8` master that scrubs smoothly on desktop can stutter on a phone. Produce a
 lighter `-m.mp4` sibling for every clip — **720p, `-g 4`** (more keyframes = cheaper
 seeks; keyframe-every-4-to-10 is the industry recipe for scrub-smooth mobile video), crf
 23 — and wire them as `clipMobile` / `connectorsMobile` (Step 7). Extract each mobile
@@ -551,7 +594,7 @@ end-to-end:
     over the instant you scroll — no blank/black scene (the iOS priming fix). Test iOS Safari
     specifically; it's the one that goes blank if this regresses.
   - Verify the `-m.mp4` variant is actually served on mobile (Network panel), and the
-    heavy 1080p master on desktop.
+    heavy master on desktop.
   - Slowly scroll so the URL bar collapses — the page must **not jump** (height-only resizes
     are ignored on touch). Rotate the device — layout should recompose cleanly.
   - Portrait crops a 16:9 clip to its centre; confirm the focal subject still reads. If a
@@ -565,7 +608,7 @@ end-to-end:
 
 Read `references/gotchas.md` the moment any generation fails or any QA check reads
 wrong — it maps symptom → cause → fix for every failure seen in production (encode,
-theming, phone, iOS, Kling flags, portrait crops, and more). The five that block runs
+theming, phone, iOS, model params, portrait crops, and more). The five that block runs
 most often:
 
 - **Seam pop** → connector endpoints were the diorama stills, not the neighbouring
@@ -574,24 +617,25 @@ most often:
 - **Seam stutter / camera "jumps backward"** → camera *velocity reverses* across a seam
   (inherent to architecture B's pull-outs). Grounded walkthroughs must use
   architecture A (Step 4).
-- **NSFW false-positives (Seedance `status "nsfw"`)** → flags innocuous interiors
+- **Content-filter false-positives** → innocuous interiors get flagged
   (bedroom/pool/spa; words like "bed", "wine", "swim"). In order: re-roll (often passes
   2nd–3rd try) → strip trigger words + add "empty, unoccupied, no people, architectural"
-  → regenerate that one clip on `kling3_0` with the same start/end frames → set the
-  connector slot to `null` (engine crossfades that seam directly). Budget re-rolls on
-  interiors.
+  → regenerate that one clip on `byte-plus-seedance-2` with the same start/end frames
+  (different provider, different filter) → set the connector slot to `null` (engine
+  crossfades that seam directly). Budget re-rolls on interiors.
 - **Frozen video / stuck at frame 0** → host doesn't serve byte ranges, `seekable=[0,0]`.
   Blob URLs fix it (engine does this).
-- **Concurrent gens 503 / "not_enough_credits" race** → transient under parallel launch;
-  re-roll the individual failure (verify credits with `higgsfield workspace list`).
+- **Unexpected audio / editorial cuts in a clip** → Kling's `generateSound` defaults ON
+  and `multiShot: true` produces cut sequences. Every chained clip: `generateSound:
+  false`, `multiShot: false` — and `-an` at encode regardless.
 
 ## References
 
 - `references/prompts.md` — the intake checklist, style-preamble pattern, and every
   prompt template (scene still, dive, connector) with fill-in slots.
-- `references/pipeline.md` — copy-paste batch scripts for the whole run (anchor-gated
-  stills → previz → dives → frames → connectors → encode → posters → SSIM seam gate →
-  mobile encode), idempotent + bash-3.2-safe.
+- `references/pipeline.md` — the per-asset OpenArt MCP recipes + local scripts for the
+  whole run (anchor-gated stills → legs/dives → frames → upload lane → connectors →
+  encode → posters → SSIM seam gate → mobile encode), idempotent + bash-3.2-safe.
 - `references/scrub-engine.js` — the portable, config-driven scrub engine (builds DOM +
   injects CSS; blob-seek, lazy load, seam crossfade, extracted-frame posters, hidden
   `data-sw-seo` static-copy block, copy, route rail, reduced-motion, and phone hardening:

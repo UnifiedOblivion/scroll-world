@@ -10,36 +10,38 @@ list. Symptom → cause → fix.
   camera *velocity reverses* (forward dive, then a connector that pulls back out) it
   reads as a rewind. This is inherent to architecture B. For any grounded walkthrough use
   architecture A (one continuous forward take — legs chained from actual last frames, no
-  pull-back, no `--end-image`); see SKILL Step 4.
+  pull-back, no `endFrame`); see SKILL Step 4.
 - **Still→video pop on first paint** → the poster is the 3:2 source still, not the
   encoded clip's extracted first frame. Wire `sections[k].poster` (pipeline.md §5b).
 - **Frozen video / stuck at frame 0** → `seekable=[0,0]`; the host isn't serving byte
   ranges. Use blob URLs (engine does).
 - **Huge files** → you used all-intra. Use `-g 8` + blob instead.
-- **Soft / low quality** → you downscaled or over-compressed. Encode native 1080p,
-  crf ≤ 20, add `unsharp`. Video is inherently softer than the stills — keep the stills
-  as the lite fallback for max fidelity.
-- **Concurrent gens 503 / "not_enough_credits" race** → transient when many launch at
-  once; re-roll the individual failure, it's not really out of credits (verify with
-  `higgsfield workspace list`).
-- **NSFW false-positives (Seedance `status "nsfw"`)** → the video content filter flags
-  perfectly innocuous clips, especially **bedroom, pool, spa/wellness** contexts and
-  trigger words like "bed", "pool", "waterfall", "wine", "swim". It's partly the prompt
-  wording and partly the reference frames. Fixes, in order: (1) re-roll — it's often
-  non-deterministic and passes on the 2nd–3rd try; (2) strip trigger words and add
-  "empty, unoccupied, no people, no figures, architectural, tasteful"; (3) regenerate
-  just that clip on **`kling3_0`** with the same start/end frames — a different
-  provider's filter often passes what Seedance blocks. Expect a slight render-character
-  shift on that one clip (each model has its own grain/motion feel); for a 5s connector
-  behind a crossfade that usually beats option (4): set the connector slot to `null` —
-  the engine crossfades that seam directly (optional connectors), so the page still
-  completes. Budget extra credits/time for these re-rolls on interiors/real-estate content.
+- **Soft / low quality** → you downscaled or over-compressed. Encode at the render's
+  native resolution (never upscale), crf ≤ 20, add `unsharp`. Video is inherently softer
+  than the stills — keep the stills as the lite fallback for max fidelity.
+- **Transient job failures / credit errors when several jobs run at once** → re-roll the
+  individual failure, don't restart the batch; verify real credit balance with
+  `openart_account_get` and read the job's failure reason via
+  `openart_creation_get(historyId)`.
+- **Content-filter false-positives** → video content filters flag perfectly innocuous
+  clips, especially **bedroom, pool, spa/wellness** contexts and trigger words like
+  "bed", "pool", "waterfall", "wine", "swim". It's partly the prompt wording and partly
+  the reference frames. Fixes, in order: (1) re-roll — it's often non-deterministic and
+  passes on the 2nd–3rd try; (2) strip trigger words and add "empty, unoccupied, no
+  people, no figures, architectural, tasteful"; (3) regenerate just that clip on
+  **`byte-plus-seedance-2`** (`image2video`, `generateAudio: false`) with the same
+  uploaded start/end frames — a different provider's filter often passes what the chain
+  model blocks. Expect a slight render-character shift on that one clip (each model has
+  its own grain/motion feel); for a 5s connector behind a crossfade that usually beats
+  option (4): set the connector slot to `null` — the engine crossfades that seam
+  directly (optional connectors), so the page still completes. Budget extra
+  credits/time for these re-rolls on interiors/real-estate content.
 - **Dark / custom theme** → the engine wraps its default tokens in `@layer sw`, so a
   page-level `:root` / `.sw-root { --sw-bg; --sw-ink; --sw-accent; --sw-font-* }` block
   wins cleanly (no specificity hacks). `--sw-ink` is your primary **text/heading** colour;
   the **accent** fills the primary button and active nav. For a dark theme, set `--sw-bg`
   dark and `--sw-ink` light — the copy scrim and title shadow follow `--sw-bg` automatically.
-- **Phone scrub stutters / freezes on a fast flick** → the 1080p master is too heavy for a
+- **Phone scrub stutters / freezes on a fast flick** → the full-res master is too heavy for a
   phone decoder and seeks pile up. Ship the `-m.mp4` mobile encodes (720p, `-g 4`) and wire
   `clipMobile`/`connectorsMobile` (SKILL Step 6/7). The engine already coalesces seeks; the
   lighter encode is the other half. Still choppy on a low-end device? Tighten GOP
@@ -74,16 +76,25 @@ list. Symptom → cause → fix.
   scene's focal subject centred with a little headroom (prompts.md), or generate a 9:16 hero
   for the scenes that matter most. The engine centre-crops (`object-fit:cover`); it can't
   un-crop a widescreen composition.
-- **`--generate-audio` errors on seedance** → omit it; mute in HTML and `-an` on encode.
-- **Kling rejects your flags** → `kling3_0` has **no `--resolution` param** (don't pass
-  one; encode at whatever native res ffprobe reports) and **sound defaults on** — pass
-  `--sound off`. Duration default is 5; legs/dives want 10.
+- **Unexpected audio in a clip** → Kling's `generateSound` defaults **ON** (Seedance's
+  `generateAudio` too) — set it `false` on every job, and `-an` on encode regardless.
+- **A clip contains editorial cuts** → `multiShot` was left on (or truthy). Every
+  chained clip is one continuous shot: `multiShot: false` on kling-3-omni.
+- **Kling rejects your params / wrong aspect out** → `kling-3-omni` `image2video` has
+  **no aspect param** — the clip inherits the start frame's aspect (generate stills at
+  16:9; a 3:2 still yields a non-16:9 clip that can't join the chain). Fields drift:
+  re-fetch `openart_model_form_get` rather than reusing a stale param block. Encode at
+  whatever native res ffprobe reports (`std` ≈ 720-class, `pro` ≈ 1080-class).
+- **Prompt-expansion mangles the handoff clauses** → some models (e.g. `wan2-7`)
+  default `enablePromptExpansion: true`; a rewriter can paraphrase away the verbatim
+  motion-handoff contract. Turn it off for every chained clip.
 - **Seam pop only where you "saved credits"** → you swapped models mid-chain, or used a
-  start-image-only model where a connector needs an `--end-image`. One model for the whole
-  chain; the only cheap tier is `seedance_2_0_mini`, which keeps frame-locking so it stays
-  seamless. (Any model with reference-only inputs can't hold a seam at all — SKILL Step 4.)
-- **White-box scenes** → `gpt_image_2` returns a solid bg; either match the page bg to it
-  or knock it out (SKILL Step 3).
+  start-frame-only mode where a connector needs an `endFrame`. One model for the whole
+  chain; the cheap tier is the SAME model at `resolution: "std"`, which frame-locks
+  identically so it stays seamless. (Element-reference modes can't hold a seam at all —
+  SKILL Step 4.)
+- **White-box scenes** → the still model returns a solid bg (the prompts ask for it);
+  either match the page bg to it or knock it out (SKILL Step 3).
 - **bash 3.2** on macOS → no associative arrays in scripts.
 
 ## Beyond video scrubbing — the frame-sequence alternative

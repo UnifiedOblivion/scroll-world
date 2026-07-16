@@ -41,19 +41,20 @@ cp -R scroll-world/plugins/scroll-world/skills/scroll-world ~/.claude/skills/
 
 ## Requirements
 
-- The [Higgsfield CLI](https://higgsfield.ai), authenticated (`higgsfield auth login`),
-  with credits.
+- The [OpenArt](https://openart.ai) MCP server connected in Claude Code, authenticated
+  (OAuth via `/mcp`), with credits.
 - `ffmpeg` / `ffprobe` for frame extraction and encoding.
 - Python 3 with Pillow (optional — only for the transparent-scene knockout).
 
 ## What it does
 
-It leans on [Higgsfield](https://higgsfield.ai) for the art: cohesive isometric diorama
-scenes (GPT Image 2) and the camera flights themselves (Seedance image-to-video), scrubbed
-by scroll position — the same technique behind Apple's scroll-through product pages. The
-camera genuinely moves; scroll only drives time. It's **framework-agnostic**: you get the
-Higgsfield pipeline, the prompt templates, and a portable vanilla-JS scrub engine that
-drops into plain HTML, Next.js, Vue, or a Python-served page — nothing assumes a stack.
+It leans on [OpenArt](https://openart.ai) for the art: cohesive isometric diorama
+scenes (Seedream 5.0 Pro) and the camera flights themselves (Kling 3 Omni
+image-to-video with frame-locked start/end conditioning), scrubbed by scroll position —
+the same technique behind Apple's scroll-through product pages. The camera genuinely
+moves; scroll only drives time. It's **framework-agnostic**: you get the OpenArt
+pipeline, the prompt templates, and a portable vanilla-JS scrub engine that drops into
+plain HTML, Next.js, Vue, or a Python-served page — nothing assumes a stack.
 
 When invoked, the skill:
 
@@ -62,10 +63,10 @@ When invoked, the skill:
    standard ~11–14 / showcase 17+ — scene count and camera architecture follow from it),
    the ordered scenes the camera visits, and a **mobile tier** (crop-safe → full 9:16
    portrait chain). It closes with a spend estimate you approve before anything generates.
-2. **Generates the assets** with Higgsfield, gated so credits aren't wasted — ONE anchor
-   still first (you approve the art direction, then the rest batch style-locked), a cheap
-   **previz pass** of the whole chain on the draft model for bigger runs, then the final
-   dive/leg clips and the **connector** clips that join consecutive scenes.
+2. **Generates the assets** with OpenArt, gated so credits aren't wasted — ONE anchor
+   still first (you approve the art direction, then the rest batch style-locked), an
+   optional **draft pass** at Kling's `std` resolution before `4k` finals, then the
+   final dive/leg clips and the **connector** clips that join consecutive scenes.
 3. **Verifies and wires it up** — posters extracted from the encoded clips, an automated
    **SSIM seam check** on every join, then a config-driven scroll engine that plays the
    whole chain as one flight.
@@ -83,7 +84,7 @@ It also captures the non-obvious production gotchas: blob-URL loading so scrubbi
 hosts that don't serve HTTP byte-range requests, GOP/encoding settings that stay sharp
 without bloating, an iOS Low Power Mode stills fallback, device-class clip tiering
 (phones get 720p tight-GOP encodes, iPads and desktops the 1080p master), data-saver
-handling, a crawlable SEO copy block, and Higgsfield's quirks.
+handling, a crawlable SEO copy block, and the generation models' quirks.
 
 ## What's in the skill
 
@@ -91,9 +92,9 @@ handling, a crawlable SEO copy block, and Higgsfield's quirks.
 skills/scroll-world/
 ├── SKILL.md                    the procedure + budget/mobile tiers + the seam rule
 └── references/
-    ├── prompts.md              intake checklist + every Higgsfield prompt template
-    ├── pipeline.md             idempotent batch scripts (anchor-gated stills → previz →
-    │                           dives → connectors → encode → posters → SSIM seam gate)
+    ├── prompts.md              intake checklist + every prompt template
+    ├── pipeline.md             idempotent OpenArt recipes + local scripts (anchor-gated
+    │                           stills → dives → connectors → encode → posters → SSIM seam gate)
     ├── scrub-engine.js         portable, config-driven scrub engine (blob-seek, lazy load,
     │                           seam crossfade, device-class tiering, LPM/data-saver fallbacks)
     ├── index-template.html     a minimal standalone page that mounts the engine (+ SEO block)
@@ -103,10 +104,11 @@ skills/scroll-world/
 
 ## Notes
 
-- Asset generation costs Higgsfield credits — the budget tier sets the bill: lean ≈ 8
+- Asset generation costs OpenArt credits — the budget tier sets the bill: lean ≈ 8
   generations (4 scenes, N videos), standard ≈ 11–14, showcase ≈ 17+ (N stills + 2N-1
-  videos), plus a re-roll buffer. Generation takes a while — the skill runs them in the
-  background and polls, and every step is resumable (finished assets are never re-paid).
+  videos), plus a re-roll buffer; the skill quotes live prices and gets approval before
+  spending. Generation takes a while — jobs are submitted and polled, and every step is
+  resumable (finished assets are never re-paid).
 - The generated `.mp4`/`.webp` assets are produced per project; they're not shipped here.
 
 ## License

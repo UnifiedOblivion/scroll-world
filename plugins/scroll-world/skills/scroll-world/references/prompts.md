@@ -12,7 +12,7 @@ Collect and write down:
 - `PALETTE` — 4–6 named hexes, e.g. `taro #9B7EBD, cream #F5EDE0, caramel #C88A5A, matcha #8FB98A, plum #3A2E48`. Pick ONE as the scene **background** colour (usually the lightest) and one as the primary **accent**.
 - `TONE` — a word or two (cozy/premium, playful, industrial…).
 - `STYLE` — the art direction (default below).
-- `BUDGET_TIER` — lean (~8 gens, 4 scenes, arch A) / standard (~11–14) / showcase (17+). **Asked BEFORE the journey** (SKILL Step 1.4) — scene count and architecture follow from it. Video gens dominate cost: arch A = N videos, arch B = 2N-1.
+- `BUDGET_TIER` — lean (4 scenes, arch A) / standard (5) / showcase (6–7, arch B). **Asked BEFORE the journey** (SKILL Step 1.4) — scene count and architecture follow from it. Video gens dominate cost: arch A = N videos, arch B = 2N-1; quote live credit totals with `openart_model_cost` (SKILL Step 1 carries 2026-07 reference prices).
 - `SECTIONS[]` — ordered list **sized to BUDGET_TIER**; for each: `id`, `label`, `subject` (what's in the diorama), `eyebrow`, `title`, `body` (≤ 1 sentence), `tags[]` (0–3). Last section = hero product + CTA.
 - `MOBILE` — tier: crop-safe / mobile-encodes / hero-reframe / portrait-chain. **Always asked** (SKILL Step 1.6) with credit costs stated. Gates the `-m.mp4` encodes + `posterMobile` (pipeline §6), the 9:16 renders (pipeline §7), and the full mobile QA. Phones get the full scroll animation in every tier.
 
@@ -33,9 +33,12 @@ Alternate directions (swap the first two sentences, keep the palette/no-text tai
 - **Glossy toy:** "Isometric glossy vinyl-toy diorama, smooth plastic shading, soft rim light, collectible figurine look."
 - **Claymation:** "Isometric stop-motion clay set, visible thumbprints, handmade plasticine texture, soft studio softbox light."
 - **Neon night:** "Isometric miniature at night, warm interior glow and neon signage, moody rim light, wet reflective ground."
-- **Photoreal architectural** (real estate, hospitality, premium/luxury): "Ultra-photorealistic architectural photography of a single cohesive [subject], cinematic wide-angle, warm golden-hour light, natural materials, restrained designer furnishings, a breathtaking view, editorial magazine quality (Architectural Digest), shallow depth of field, no people." For photoreal, drop the floating-island framing and the knockout (Step 3) — the scenes are **full-bleed** (a dark page background reads premium), the "dive" glides *through doorways/glass* rather than opening a roof, and cohesion comes entirely from the identical preamble (do NOT pass an `--image` reference — it clones the same room). Interiors trip Seedance's NSFW filter often; see SKILL Gotchas.
+- **Photoreal architectural** (real estate, hospitality, premium/luxury): "Ultra-photorealistic architectural photography of a single cohesive [subject], cinematic wide-angle, warm golden-hour light, natural materials, restrained designer furnishings, a breathtaking view, editorial magazine quality (Architectural Digest), shallow depth of field, no people." For photoreal, drop the floating-island framing and the knockout (Step 3) — the scenes are **full-bleed** (a dark page background reads premium), the "dive" glides *through doorways/glass* rather than opening a roof, and cohesion comes entirely from the identical preamble (do NOT pass a reference image — it clones the same room). Interiors trip video content filters often; see SKILL Gotchas.
 
 ## Scene still prompt (Step 2)
+
+Model: Seedream 5.0 Pro (SKILL Step 0 availability gate), `text2image` for the anchor,
+`image2image` with the approved anchor as reference for the rest.
 
 ```
 [STYLE PREAMBLE]
@@ -54,13 +57,15 @@ Tips:
   edges — it will be cut off on phones. This also keeps the dive's focal point (which the
   camera flies toward) inside the mobile crop. For a scene that absolutely must show its full
   width on mobile, generate a separate 9:16 variant for it.
-- Aspect `3:2`, `--resolution 2k --quality high`.
+- Aspect **16:9**, 2K-class quality per the current form. (16:9, not 3:2 — Kling's
+  `image2video` has no aspect param; the clip inherits the still's aspect, and the
+  chain is 16:9.)
 
 ## Leg prompt — architecture A, continuous forward take (Step 4)
 
-`--start-image = previous leg's ACTUAL last frame` (leg 0: the first scene's still).
-**No `--end-image`.** The bolded clauses are the motion-handoff contract — keep them
-verbatim; the mid-leg move is where the expression goes.
+`startFrame = previous leg's ACTUAL last frame`, uploaded (leg 0: the first scene's
+still). **No `endFrame`.** The bolded clauses are the motion-handoff contract — keep
+them verbatim; the mid-leg move is where the expression goes.
 
 ```
 Single continuous cinematic camera move, no cuts. **Continue the same slow, steady
@@ -92,7 +97,7 @@ orbit). If it doesn't, re-roll this leg — a bad handoff frame poisons every le
 
 ## Dive-in clip prompt (Step 4)
 
-`--start-image = the scene still` (solid-bg version).
+`startFrame = the scene still` (solid-bg version, uploaded).
 
 ```
 Single continuous cinematic camera move, no cuts. Begin high and far, looking down at the
@@ -107,15 +112,15 @@ subtle parallax. No text, no captions.
 For scenes with no building to open (a field, a plaza, a road), replace the roof clause
 with "the camera flies low across [the scene] toward [focal point]."
 
-Params by chain model (SKILL Step 4 table): seedance —
-`--mode std --resolution 1080p --aspect_ratio 16:9 --duration 8`, no audio flag;
-kling3_0 — `--mode std --sound off --aspect_ratio 16:9 --duration 10` (no `--resolution`
-param). Same for architecture-A legs.
+Params (kling-3-omni `image2video`): `{ "resolution": "pro", "duration": 8,
+"generateSound": false, "multiShot": false, "videoCount": 1 }` — expressive legs may
+take `"duration": 10`; drafts swap `"resolution": "std"`. Same block for
+architecture-A legs. Kling prompts cap at 2500 chars — the templates fit comfortably.
 
 ## Connector clip prompt (Step 5)
 
-`--start-image = dive_i LAST frame` (extracted), `--end-image = dive_{i+1} FIRST frame`
-(extracted). Both from the RENDERED videos, not the stills.
+`startFrame = dive_i LAST frame` (extracted, uploaded), `endFrame = dive_{i+1} FIRST
+frame` (extracted, uploaded). Both from the RENDERED videos, not the stills.
 
 ```
 Single continuous cinematic camera move, no cuts. The camera smoothly pulls up and back
@@ -129,9 +134,8 @@ For the last connector into a hero-product finale: "…glides forward and the wo
 dissolves toward a single giant [PRODUCT] floating in soft [BG] space, arriving in front
 of it."
 
-seedance: `--mode std --resolution 1080p --aspect_ratio 16:9 --duration 5`; kling3_0:
-`--mode std --sound off --aspect_ratio 16:9 --duration 5`. Connectors need `--end-image`
-→ use a roster model that accepts it (Step 4).
+Params: the same kling block with `"duration": 5`. Connectors need `endFrame` → use a
+roster model that accepts it (SKILL Step 4).
 
 ## Copy per section (for the engine config)
 
